@@ -2,11 +2,13 @@
 
 #include "src/orderbook/OrderBook.h"
 
-template <typename TradeCallback, typename AddCallback, typename CancelCallback> struct MatchingEngineListener {
+template <typename TradeCallback, typename AddCallback, typename CancelCallback, typename ModifyCallback>
+struct MatchingEngineListener {
 
     TradeCallback trade_callback;
     AddCallback add_callback;
     CancelCallback cancel_callback;
+    ModifyCallback modify_callback;
 
     void onTrade(OrderId incoming_id, OrderId resting_id, Price price, Quantity qty) {
         trade_callback(incoming_id, resting_id, price, qty);
@@ -15,6 +17,7 @@ template <typename TradeCallback, typename AddCallback, typename CancelCallback>
     void onOrderAdded(const Order& order) { add_callback(order); }
 
     void onOrderCanceled(OrderId id) { cancel_callback(id); }
+    void onOrderModified(const Order& order) { modify_callback(order) }
 };
 
 struct MatchingEngine {
@@ -72,7 +75,11 @@ struct MatchingEngine {
 
         void insert(Order& buy_order) { book.insertBid(buy_order); }
 
-                void fillOrder(Level& ask_level, Level::RestingOrder* ask, Quantity trade_quantity) {
+        void fillRestingOrder(Level& bid_level, Level::RestingOrder* bid, Quantity trade_quantity) {
+            book.fillBidOrder(bid_level, bid, trade_quantity);
+        }
+
+        void fillOppositeOrder(Level& ask_level, Level::RestingOrder* ask, Quantity trade_quantity) {
             book.fillAskOrder(ask_level, ask, trade_quantity);
         }
 
@@ -93,9 +100,14 @@ struct MatchingEngine {
 
         void insert(Order& sell_order) { book.insertAsk(sell_order); }
 
-        void fillOrder(Level& bid_level, Level::RestingOrder* bid, Quantity trade_quantity) {
+        void fillOppositeOrder(Level& bid_level, Level::RestingOrder* bid, Quantity trade_quantity) {
             book.fillBidOrder(bid_level, bid, trade_quantity);
         }
+
+        void fillRestingOrder(Level& ask_level, Level::RestingOrder* ask, Quantity trade_quantity) {
+            book.fillAskOrder(ask_level, ask, trade_quantity);
+        }
+
         void cancel(Level::RestingOrder* ask) { book.removeAsk(ask); }
     };
 
@@ -108,7 +120,7 @@ struct MatchingEngine {
 
             Quantity trade_quantity = std::min(order.quantity, matching_order->order.quantity);
             order.quantity -= trade_quantity;
-            book_policy.fillOrder(match_level, matching_order, trade_quantity);
+            book_policy.fillOppositeOrder(match_level, matching_order, trade_quantity);
 
             listener.onTrade(order.id, matching_order->order.id, matching_order->order.price, trade_quantity);
         }
@@ -133,8 +145,8 @@ struct MatchingEngine {
         if (price == resting_order->order.price && quantity < resting_order->order.quantity) {
             Level& order_level = book_policy.getRestingLevel(resting_order->order.price);
             Quantity delta = resting_order->order.quantity - quantity;
-            book_policy.fillOrder(order_level, resting_order, delta);
-            listener.onOrderAdded(resting_order->order);
+            book_policy.fillRestingOrder(order_level, resting_order, delta);
+            listener.onOrderModified(resting_order->order);
         } else {
             Order modified_order = resting_order->order;
             modified_order.price = price;
